@@ -4,126 +4,133 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 
-# --- CONFIGURAÇÕES E ESTILIZAÇÃO ---
-st.set_page_config(page_title="OFICINA PREMIER", layout="wide", page_icon="⚙️")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="SISTEMA OFICINA ELITE", layout="wide", page_icon="🏎️")
 
-# CSS para deixar o sistema com cara de Software Moderno
+# --- BANCO DE DADOS INTEGRADO ---
+conn = sqlite3.connect('oficina_master_v3.db', check_same_thread=False)
+cursor = conn.cursor()
+
+# Criação de tabelas com chaves estrangeiras (Relações Reais)
+cursor.execute('CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY, nome TEXT, tel TEXT, placa TEXT, carro TEXT)')
+cursor.execute('CREATE TABLE IF NOT EXISTS produtos (id INTEGER PRIMARY KEY, nome TEXT, preco_venda REAL, estoque_atual INTEGER)')
+cursor.execute('''CREATE TABLE IF NOT EXISTS ordens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    cliente_id INTEGER, 
+    problema TEXT, 
+    valor_total REAL, 
+    custo_total REAL,
+    status TEXT, 
+    data_abertura TEXT,
+    FOREIGN KEY(cliente_id) REFERENCES clientes(id))''')
+conn.commit()
+
+# --- ESTILIZAÇÃO CUSTOMIZADA ---
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stApp { background-color: #0E1117; color: white; }
+    div[data-testid="stMetricValue"] { color: #00FF00; }
+    .stButton>button { background-color: #FF4B4B; color: white; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- BANCO DE DADOS ---
-conn = sqlite3.connect('oficina_master_v2.db', check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute('CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY, nome TEXT, tel TEXT, veiculo TEXT, placa TEXT)')
-cursor.execute('CREATE TABLE IF NOT EXISTS estoque (id INTEGER PRIMARY KEY, item TEXT, qtd INTEGER, preco REAL)')
-cursor.execute('''CREATE TABLE IF NOT EXISTS ordens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, cliente_id INTEGER, status TEXT, 
-    descricao TEXT, valor_total REAL, data_entrada TEXT, data_saida TEXT, lucro REAL)''')
-conn.commit()
+# --- MENU LATERAL ---
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1995/1995471.png", width=100)
+st.sidebar.title("MENU DE GESTÃO")
+aba = st.sidebar.radio("Escolha o Módulo", ["📊 Dashboard", "👥 Clientes", "📦 Estoque", "🛠️ Oficina (OS)", "💰 Caixa/Lucro"])
 
-# --- LOGIN ---
-if 'logado' not in st.session_state: st.session_state.logado = False
-
-if not st.session_state.logado:
-    st.title("⚙️ OFICINA PREMIER - LOGIN")
-    col1, col2, col3 = st.columns([1,1,1])
-    with col2:
-        u = st.text_input("Usuário")
-        s = st.text_input("Senha", type="password")
-        if st.button("ENTRAR NO SISTEMA"):
-            if u == "admin" and s == "admin": 
-                st.session_state.logado = True
-                st.rerun()
-            else: st.error("Acesso Negado")
-    st.stop()
-
-# --- MENU ---
-menu = st.sidebar.radio("MENU PRINCIPAL", ["Dashboard", "Clientes & Veículos", "Nova Ordem (OS)", "Oficina (Pátio)", "Estoque", "Financeiro"])
-
-# --- 1. DASHBOARD ---
-if menu == "Dashboard":
+# --- MÓDULO 1: DASHBOARD ---
+if aba == "📊 Dashboard":
     st.title("🚀 Painel de Resultados")
     df_os = pd.read_sql_query("SELECT * FROM ordens", conn)
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("OS Abertas", len(df_os[df_os['status'] == 'Aberta']))
-    c2.metric("OS Concluídas", len(df_os[df_os['status'] == 'Finalizada']))
-    c3.metric("Receita Bruta", f"R$ {df_os['valor_total'].sum():.2f}")
-    c4.metric("Lucro Real", f"R$ {df_os['lucro'].sum():.2f}")
+    c1.metric("OS Ativas", len(df_os[df_os['status'] != 'Paga']))
+    c2.metric("Faturamento", f"R$ {df_os['valor_total'].sum():.2f}")
+    c3.metric("Custo Total", f"R$ {df_os['custo_total'].sum():.2f}")
+    c4.metric("Lucro Líquido", f"R$ {(df_os['valor_total'].sum() - df_os['custo_total'].sum()):.2f}")
 
     if not df_os.empty:
-        st.subheader("📈 Desempenho Mensal")
-        fig = px.bar(df_os, x='data_entrada', y='valor_total', color='status', title="Vendas por Dia")
+        fig = px.pie(df_os, names='status', title="Distribuição de Serviços", hole=0.5)
         st.plotly_chart(fig, use_container_width=True)
 
-# --- 2. CLIENTES ---
-elif menu == "Clientes & Veículos":
-    st.title("👥 Gestão de Clientes")
-    with st.form("cad_cliente"):
-        col1, col2 = st.columns(2)
-        nome = col1.text_input("Nome do Cliente")
-        tel = col1.text_input("WhatsApp")
-        veiculo = col2.text_input("Modelo do Carro")
-        placa = col2.text_input("Placa")
-        if st.form_submit_button("CADASTRAR CLIENTE"):
-            cursor.execute("INSERT INTO clientes (nome, tel, veiculo, placa) VALUES (?,?,?,?)", (nome, tel, veiculo, placa))
+# --- MÓDULO 2: CLIENTES ---
+elif aba == "👥 Clientes":
+    st.header("Gestão de Clientes e Frotas")
+    with st.form("cad_cli"):
+        n = st.text_input("Nome Completo")
+        t = st.text_input("WhatsApp")
+        p = st.text_input("Placa do Veículo")
+        c = st.text_input("Modelo/Ano")
+        if st.form_submit_button("Cadastrar"):
+            cursor.execute("INSERT INTO clientes (nome, tel, placa, carro) VALUES (?,?,?,?)", (n,t,p,c))
             conn.commit()
-            st.success("Cliente e Veículo cadastrados!")
+            st.success("Cliente salvo!")
     
-    st.subheader("Base de Clientes")
     st.dataframe(pd.read_sql_query("SELECT * FROM clientes", conn), use_container_width=True)
 
-# --- 3. NOVA OS ---
-elif menu == "Nova Ordem (OS)":
-    st.title("📝 Abrir Nova Ordem de Serviço")
-    df_cli = pd.read_sql_query("SELECT id, nome, veiculo, placa FROM clientes", conn)
+# --- MÓDULO 3: ESTOQUE ---
+elif aba == "📦 Estoque":
+    st.header("Controle de Peças e Produtos")
+    with st.form("cad_prod"):
+        item = st.text_input("Nome da Peça")
+        pv = st.number_input("Preço de Venda (R$)", min_value=0.0)
+        qtd = st.number_input("Quantidade em Estoque", min_value=0)
+        if st.form_submit_button("Adicionar Peça"):
+            cursor.execute("INSERT INTO produtos (nome, preco_venda, estoque_atual) VALUES (?,?,?)", (item, pv, qtd))
+            conn.commit()
     
-    if df_cli.empty:
-        st.warning("Cadastre um cliente primeiro!")
-    else:
-        with st.form("os"):
-            cliente_sel = st.selectbox("Selecione o Cliente/Veículo", 
-                                     options=df_cli.apply(lambda r: f"{r['id']} - {r['nome']} ({r['placa']})", axis=1))
-            cli_id = cliente_sel.split(" - ")[0]
-            desc = st.text_area("O que precisa ser feito?")
-            val = st.number_input("Valor do Orçamento (R$)", min_value=0.0)
-            if st.form_submit_button("GERAR ORDEM DE SERVIÇO"):
-                data = datetime.now().strftime("%d/%m/%Y")
-                cursor.execute("INSERT INTO ordens (cliente_id, status, descricao, valor_total, data_entrada, lucro) VALUES (?,?,?,?,?,?)",
-                             (cli_id, 'Aberta', desc, val, data, 0))
-                conn.commit()
-                st.success("OS enviada para o Pátio!")
+    st.dataframe(pd.read_sql_query("SELECT * FROM produtos", conn), use_container_width=True)
 
-# --- 4. PÁTIO (GESTÃO VISUAL) ---
-elif menu == "Oficina (Pátio)":
-    st.title("🔧 Veículos na Oficina")
-    # Join para pegar dados do cliente e da OS
-    query = """
-    SELECT ordens.id, clientes.nome, clientes.veiculo, clientes.placa, ordens.descricao, ordens.valor_total, ordens.status
-    FROM ordens INNER JOIN clientes ON ordens.cliente_id = clientes.id
-    WHERE ordens.status != 'Finalizada'
-    """
-    df_patio = pd.read_sql_query(query, conn)
+# --- MÓDULO 4: OFICINA (OS INTEGRADA) ---
+elif aba == "🛠️ Oficina (OS)":
+    st.header("Gerenciamento de Ordens de Serviço")
     
-    for i, row in df_patio.iterrows():
-        with st.expander(f"🚗 {row['veiculo']} - Placa: {row['placa']} (OS #{row['id']})"):
-            st.write(f"**Cliente:** {row['nome']}")
-            st.write(f"**Problema:** {row['descricao']}")
-            st.write(f"**Valor Orçado:** R$ {row['valor_total']:.2f}")
-            if st.button(f"Finalizar Serviço #{row['id']}"):
-                cursor.execute("UPDATE ordens SET status='Finalizada', data_saida=?, lucro=? WHERE id=?", 
-                             (datetime.now().strftime("%d/%m/%Y"), row['valor_total']*0.4, row['id']))
-                conn.commit()
-                st.rerun()
+    tab1, tab2 = st.tabs(["Nova OS", "Gerenciar Pátio"])
+    
+    with tab1:
+        df_c = pd.read_sql_query("SELECT id, nome, placa FROM clientes", conn)
+        df_p = pd.read_sql_query("SELECT id, nome, preco_venda FROM produtos", conn)
+        
+        if df_c.empty: st.warning("Cadastre um cliente primeiro!")
+        else:
+            with st.form("abrir_os"):
+                cliente = st.selectbox("Cliente", options=df_c.apply(lambda r: f"{r['id']}-{r['nome']} ({r['placa']})", axis=1))
+                servico = st.text_area("Diagnóstico/Serviço")
+                peca_usada = st.multiselect("Peças Utilizadas", options=df_p['nome'].tolist())
+                mao_de_obra = st.number_input("Valor Mão de Obra (R$)", min_value=0.0)
+                
+                if st.form_submit_button("Abrir Ordem de Serviço"):
+                    c_id = cliente.split("-")[0]
+                    # Calcula valor total (Mão de obra + soma das peças selecionadas)
+                    valor_pecas = df_p[df_p['nome'].isin(peca_usada)]['preco_venda'].sum()
+                    total = mao_de_obra + valor_pecas
+                    dt = datetime.now().strftime("%d/%m/%Y")
+                    
+                    cursor.execute("INSERT INTO ordens (cliente_id, problema, valor_total, custo_total, status, data_abertura) VALUES (?,?,?,?,?,?)",
+                                   (c_id, servico, total, valor_pecas*0.6, "Em Execução", dt))
+                    conn.commit()
+                    st.success(f"OS Aberta! Valor Total: R$ {total:.2f}")
 
-# --- 5. FINANCEIRO ---
-elif menu == "Financeiro":
-    st.title("💰 Financeiro Detalhado")
-    df_fin = pd.read_sql_query("SELECT * FROM ordens WHERE status='Finalizada'", conn)
-    st.dataframe(df_fin, use_container_width=True)
-    st.download_button("Baixar Relatório (CSV)", df_fin.to_csv(), "financeiro.csv")
+    with tab2:
+        os_ativas = pd.read_sql_query("""
+            SELECT ordens.id, clientes.nome, clientes.carro, clientes.placa, ordens.valor_total, ordens.status 
+            FROM ordens JOIN clientes ON ordens.cliente_id = clientes.id WHERE status != 'Paga'
+        """, conn)
+        
+        for _, os in os_ativas.iterrows():
+            with st.expander(f"OS #{os['id']} - {os['carro']} ({os['placa']})"):
+                st.write(f"**Cliente:** {os['nome']} | **Total:** R$ {os['valor_total']:.2f}")
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.button(f"Dar Baixa/Pagar #{os['id']}"):
+                    cursor.execute("UPDATE ordens SET status='Paga' WHERE id=?", (os['id'],))
+                    conn.commit()
+                    st.rerun()
+
+# --- MÓDULO 5: FINANCEIRO ---
+elif aba == "💰 Caixa/Lucro":
+    st.header("Movimentação Financeira")
+    finalizadas = pd.read_sql_query("SELECT * FROM ordens WHERE status='Paga'", conn)
+    st.table(finalizadas)
+    st.download_button("Exportar para Excel (CSV)", finalizadas.to_csv(), "caixa.csv")
+  
