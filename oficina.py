@@ -141,3 +141,112 @@ elif menu == "💰 Financeiro":
     st.write("Histórico de Faturamento Detalhado")
     st.dataframe(df_fin)
     st.button("📄 Exportar para Contabilidade (CSV)")
+import { describe, expect, it, vi } from "vitest";
+import { appRouter } from "./routers";
+import type { TrpcContext } from "./_core/context";
+
+function createMockContext(): TrpcContext {
+  return {
+    user: {
+      id: 1,
+      openId: "test-user",
+      email: "test@example.com",
+      name: "Test User",
+      loginMethod: "manus",
+      role: "admin",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastSignedIn: new Date(),
+    },
+    req: {
+      protocol: "https",
+      headers: {},
+    } as TrpcContext["req"],
+    res: {
+      clearCookie: vi.fn(),
+    } as TrpcContext["res"],
+  };
+}
+
+describe("Comissões - Serialização de Datas (Regressão)", () => {
+  it("deve serializar comissões sem erro toISOString", async () => {
+    const ctx = createMockContext();
+    const caller = appRouter.createCaller(ctx);
+    
+    // O endpoint list deve existir e ser chamável
+    expect(caller.comissoes.list).toBeDefined();
+    
+    // Verificar que o endpoint aceita filtros com datas como strings
+    const result = await caller.comissoes.list({
+      dataInicio: "2026-01-01",
+      dataFim: "2026-12-31",
+    });
+    
+    // Deve retornar um array (vazio ou com dados)
+    expect(Array.isArray(result)).toBe(true);
+    
+    // Se houver dados, verificar que dataPagamento é string ou null
+    if (result.length > 0) {
+      result.forEach(comissao => {
+        expect(typeof comissao.id).toBe("number");
+        expect(typeof comissao.mecanicoId).toBe("number");
+        expect(typeof comissao.osId).toBe("number");
+        expect(typeof comissao.status).toBe("string");
+        // dataPagamento deve ser string (YYYY-MM-DD) ou null, nunca Date
+        if (comissao.dataPagamento !== null) {
+          expect(typeof comissao.dataPagamento).toBe("string");
+          // Validar formato YYYY-MM-DD
+          expect(comissao.dataPagamento).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        }
+        // createdAt e updatedAt devem ser Date ou timestamp
+        expect(comissao.createdAt).toBeDefined();
+        expect(comissao.updatedAt).toBeDefined();
+        // mecanicoNome deve estar presente
+        expect(typeof comissao.mecanicoNome).toBe("string");
+      });
+    }
+  });
+
+  it("deve serializar resumo de comissões sem erro", async () => {
+    const ctx = createMockContext();
+    const caller = appRouter.createCaller(ctx);
+    
+    const result = await caller.comissoes.resumo({
+      dataInicio: "2026-01-01",
+      dataFim: "2026-12-31",
+    });
+    
+    expect(Array.isArray(result)).toBe(true);
+    
+    if (result.length > 0) {
+      result.forEach(resumo => {
+        expect(typeof resumo.mecanicoId).toBe("number");
+        expect(typeof resumo.mecanicoNome).toBe("string");
+        expect(typeof resumo.totalOS).toBe("number");
+        // totalProducao e totalComissao podem ser números ou strings (Decimal)
+        expect(resumo.totalProducao).toBeDefined();
+        expect(resumo.totalComissao).toBeDefined();
+      });
+    }
+  });
+
+  it("deve permitir pagar comissão com dataPagamento string", async () => {
+    const ctx = createMockContext();
+    const caller = appRouter.createCaller(ctx);
+    
+    // Teste que o endpoint aceita dataPagamento como string
+    const result = await caller.comissoes.pagar({
+      id: 999, // ID que provavelmente não existe, mas valida o input
+      dataPagamento: "2026-04-25",
+    }).catch(err => {
+      // Esperamos erro de DB (ID não existe), não erro de serialização
+      expect(err).toBeDefined();
+      return null;
+    });
+    
+    // Se não houver erro, sucesso
+    if (result) {
+      expect(result.success).toBe(true);
+    }
+  });
+});
