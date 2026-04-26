@@ -1,143 +1,143 @@
-import React, { useState } from 'react';
-import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Users, Search, Phone, Mail, Pencil, Trash2 } from 'lucide-react';
-import PageHeader from '@/components/shared/PageHeader';
-import EmptyState from '@/components/shared/EmptyState';
-import CustomerFormDialog from '@/components/customers/CustomerFormDialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import streamlit as st
+import sqlite3
+import pandas as pd
+import plotly.express as px
+from datetime import datetime
 
-export default function Customers() {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [search, setSearch] = useState('');
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const queryClient = useQueryClient();
+# --- CONFIGURAÇÕES DE DESIGN ---
+st.set_page_config(page_title="ERP OFICINA PRO v5.0", layout="wide", page_icon="🛠️")
 
-  const { data: customers = [], isLoading } = useQuery({
-    queryKey: ['customers'],
-    queryFn: () => base44.entities.Customer.list('-created_date'),
-  });
+# Estilo para botões e métricas
+st.markdown("""
+    <style>
+    .stButton>button { background-color: #2E7D32; color: white; border-radius: 8px; height: 50px; font-weight: bold; }
+    .stMetric { background-color: #1E1E1E; border: 1px solid #333; padding: 20px; border-radius: 12px; }
+    </style>
+""", unsafe_allow_html=True)
 
-  const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Customer.create(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customers'] }),
-  });
+# --- NÚCLEO DE DADOS (DATABASE) ---
+conn = sqlite3.connect('erp_oficina_v5.db', check_same_thread=False)
+cursor = conn.cursor()
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Customer.update(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customers'] }),
-  });
+def setup_db():
+    # Tabela de Clientes e Veículos
+    cursor.execute('''CREATE TABLE IF NOT EXISTS clientes (
+        id INTEGER PRIMARY KEY, nome TEXT, whatsapp TEXT, carro TEXT, placa TEXT UNIQUE)''')
+    
+    # Tabela de Estoque (Produtos)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS estoque (
+        id INTEGER PRIMARY KEY, item TEXT, custo REAL, venda REAL, saldo INTEGER)''')
+    
+    # Tabela de Ordens de Serviço (OS)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS ordens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, cliente_id INTEGER, 
+        servico TEXT, pecas_json TEXT, mao_de_obra REAL, 
+        total REAL, status TEXT, data TEXT,
+        FOREIGN KEY(cliente_id) REFERENCES clientes(id))''')
+    conn.commit()
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Customer.delete(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customers'] }),
-  });
+setup_db()
 
-  const handleSave = async (formData) => {
-    if (editing) {
-      await updateMutation.mutateAsync({ id: editing.id, data: formData });
-    } else {
-      await createMutation.mutateAsync(formData);
-    }
-  };
+# --- NAVEGAÇÃO PROFISSIONAL ---
+with st.sidebar:
+    st.title("⚙️ GESTÃO ELITE")
+    menu = st.radio("Módulos do Sistema", 
+                    ["📊 Dashboard Executivo", "👥 Clientes & Frotas", "📦 Estoque & Compras", "🛠️ Ordens de Serviço", "💰 Financeiro"])
+    st.divider()
+    st.info("Usuário: Administrador\nVersão: 5.0 Enterprise")
 
-  const filtered = customers.filter(c => 
-    c.name?.toLowerCase().includes(search.toLowerCase()) ||
-    c.phone?.includes(search) ||
-    c.cpf_cnpj?.includes(search)
-  );
+# --- 1. DASHBOARD EXECUTIVO ---
+if menu == "📊 Dashboard Executivo":
+    st.title("📊 Indicadores de Performance")
+    df_os = pd.read_sql_query("SELECT * FROM ordens", conn)
+    
+    c1, c2, c3, c4 = st.columns(4)
+    if not df_os.empty:
+        c1.metric("Faturamento Mensal", f"R$ {df_os['total'].sum():.2f}")
+        c2.metric("Serviços Ativos", len(df_os[df_os['status'] != 'Finalizado']))
+        c3.metric("Ticket Médio", f"R$ {df_os['total'].mean():.2f}")
+        lucro_est = df_os['total'].sum() * 0.4 # Estimativa de 40% de margem
+        c4.metric("Lucro Estimado", f"R$ {lucro_est:.2f}")
 
-  return (
-    <div className="space-y-6">
-      <PageHeader 
-        title="Clientes" 
-        subtitle={`${customers.length} clientes cadastrados`}
-        actionLabel="Novo Cliente"
-        onAction={() => { setEditing(null); setDialogOpen(true); }}
-      />
+        st.subheader("📈 Tendência de Vendas")
+        fig = px.area(df_os, x='data', y='total', title="Fluxo de Caixa Diário", markers=True)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Aguardando os primeiros registros para gerar inteligência de dados.")
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input 
-          placeholder="Buscar por nome, telefone ou CPF..." 
-          value={search} 
-          onChange={e => setSearch(e.target.value)}
-          className="pl-9"
-        />
-      </div>
+# --- 2. CLIENTES & FROTAS ---
+elif menu == "👥 Clientes & Frotas":
+    st.title("👥 Cadastro de Clientes")
+    with st.form("cli_form"):
+        col1, col2 = st.columns(2)
+        n = col1.text_input("Nome do Cliente")
+        w = col1.text_input("WhatsApp")
+        v = col2.text_input("Veículo (Marca/Modelo/Ano)")
+        p = col2.text_input("Placa")
+        if st.form_submit_button("💾 Salvar Registro"):
+            try:
+                cursor.execute("INSERT INTO clientes (nome, whatsapp, carro, placa) VALUES (?,?,?,?)", (n, w, v, p))
+                conn.commit()
+                st.success("Cliente cadastrado com sucesso!")
+            except: st.error("Erro: Esta placa já está cadastrada.")
+    
+    st.subheader("Base de Dados")
+    st.dataframe(pd.read_sql_query("SELECT * FROM clientes", conn), use_container_width=True)
 
-      {filtered.length === 0 && !isLoading ? (
-        <EmptyState 
-          icon={Users} 
-          title="Nenhum cliente encontrado"
-          description="Cadastre seu primeiro cliente para começar a gerenciar sua oficina."
-          actionLabel="Novo Cliente"
-          onAction={() => { setEditing(null); setDialogOpen(true); }}
-        />
-      ) : (
-        <div className="grid gap-3">
-          {filtered.map(customer => (
-            <Card key={customer.id} className="p-4 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-sm">{customer.name}</h3>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
-                    {customer.phone && (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Phone className="h-3 w-3" /> {customer.phone}
-                      </span>
-                    )}
-                    {customer.email && (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Mail className="h-3 w-3" /> {customer.email}
-                      </span>
-                    )}
-                    {customer.cpf_cnpj && (
-                      <span className="text-xs text-muted-foreground">{customer.cpf_cnpj}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0 ml-2">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(customer); setDialogOpen(true); }}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setDeleteTarget(customer)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
+# --- 3. ESTOQUE & COMPRAS ---
+elif menu == "📦 Estoque & Compras":
+    st.title("📦 Gestão de Insumos")
+    with st.expander("➕ Adicionar Novo Item ao Estoque"):
+        with st.form("estoque_form"):
+            i = st.text_input("Nome da Peça/Produto")
+            c = st.number_input("Custo de Compra (R$)", min_value=0.0)
+            v = st.number_input("Preço de Venda (R$)", min_value=0.0)
+            s = st.number_input("Saldo Inicial (Unidades)", min_value=0)
+            if st.form_submit_button("Adicionar"):
+                cursor.execute("INSERT INTO estoque (item, custo, venda, saldo) VALUES (?,?,?,?)", (i, c, v, s))
+                conn.commit()
+    
+    df_est = pd.read_sql_query("SELECT * FROM estoque", conn)
+    st.dataframe(df_est, use_container_width=True)
 
-      <CustomerFormDialog 
-        open={dialogOpen} 
-        onOpenChange={setDialogOpen} 
-        customer={editing}
-        onSave={handleSave}
-      />
+# --- 4. ORDENS DE SERVIÇO (PDV) ---
+elif menu == "🛠️ Ordens de Serviço":
+    st.title("🛠️ Centro de Serviços")
+    tab1, tab2 = st.tabs(["🆕 Abrir Nova OS", "📋 Gerenciar Serviços"])
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir cliente?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja excluir {deleteTarget?.name}? Esta ação não pode ser desfeita.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); }}>
-              Excluir
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
+    with tab1:
+        df_cli = pd.read_sql_query("SELECT id, nome, placa FROM clientes", conn)
+        df_prod = pd.read_sql_query("SELECT item, venda FROM estoque WHERE saldo > 0", conn)
+        
+        if df_cli.empty: st.warning("Cadastre um cliente antes de abrir uma OS.")
+        else:
+            with st.form("os_pro"):
+                cliente_sel = st.selectbox("Selecione o Cliente", options=df_cli.apply(lambda r: f"{r['id']} - {r['nome']} ({r['placa']})", axis=1))
+                servico = st.text_area("Descrição Técnica do Problema")
+                pecas_mult = st.multiselect("Peças e Peças Utilizadas", options=df_prod['item'].tolist())
+                mao = st.number_input("Valor da Mão de Obra (R$)", min_value=0.0)
+                
+                if st.form_submit_button("🚀 Gerar OS Profissional"):
+                    c_id = cliente_sel.split(" - ")[0]
+                    # Cálculo automático do total baseado no preço de venda do estoque
+                    total_pecas = df_prod[df_prod['item'].isin(pecas_mult)]['venda'].sum()
+                    total_final = total_pecas + mao
+                    data_os = datetime.now().strftime("%d/%m/%Y")
+                    
+                    cursor.execute("INSERT INTO ordens (cliente_id, servico, pecas_json, mao_de_obra, total, status, data) VALUES (?,?,?,?,?,?,?)",
+                                   (c_id, servico, str(pecas_mult), mao, total_final, "Em Execução", data_os))
+                    conn.commit()
+                    st.success(f"OS aberta com sucesso! Valor Total: R$ {total_final:.2f}")
+
+    with tab2:
+        query_os = """SELECT ordens.id, clientes.nome, clientes.placa, ordens.total, ordens.status 
+                      FROM ordens JOIN clientes ON ordens.cliente_id = clientes.id"""
+        st.dataframe(pd.read_sql_query(query_os, conn), use_container_width=True)
+
+# --- 5. FINANCEIRO ---
+elif menu == "💰 Financeiro":
+    st.title("💰 Movimentação de Caixa")
+    df_fin = pd.read_sql_query("SELECT * FROM ordens", conn)
+    st.write("Histórico de Faturamento Detalhado")
+    st.dataframe(df_fin)
+    st.button("📄 Exportar para Contabilidade (CSV)")
